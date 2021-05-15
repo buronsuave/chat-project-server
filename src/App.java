@@ -2,10 +2,12 @@ import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 
-import connection.Client;
+import connector.Client;
 
 public class App 
 {
+    private static final int SERVER_PORT = 1234;
+
     public static void main(String[] args) throws Exception 
     {
         boolean run = true;
@@ -16,7 +18,7 @@ public class App
             Socket session;
             Thread client;
 
-            server = new ServerSocket(1234);
+            server = new ServerSocket(SERVER_PORT);
 
             while (run)
             {

@@ -1,16 +1,20 @@
-package connection;
+package connector;
 
 import java.io.IOException;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import data.Connections;
 import database.UserDAO;
 import exceptions.LevelEmitException;
 import exceptions.WCException;
+import models.Message;
 import models.User;
 
 public class Client extends Thread
@@ -46,7 +50,6 @@ public class Client extends Thread
                     case 1:
                     {
                         user = signIn(input);
-                        System.out.println("User: " + user.getName() + " Pass: " + user.getPass());
                         sendUser(user);
                         break;
                     }
@@ -55,14 +58,30 @@ public class Client extends Thread
                     case 2:
                     {
                         user = signUp(input);
-                        System.out.println("User: " + user.getName() + " Pass: " + user.getPass());
                         sendUser(user);
+                        break;
+                    }
+
+                    // Sending message
+                    case 3:
+                    {
+                        Message message = getMessage(input);
+                        sendMessage(message);
                         break;
                     }
                 }   
             } 
             catch (IOException e)
             {
+                Connections.get().removeConnection(this);
+                ArrayList<User> onlineUsers = Connections.get().getOnlineUsers();
+                try 
+                {
+                    sendUsers(onlineUsers);
+                } catch (IOException e1) 
+                {
+
+                }
                 break;
             } 
             catch (JSONException e) 
@@ -123,6 +142,50 @@ public class Client extends Thread
         JSONObject json = new JSONObject(map);
         String jsonString = json.toString();
         client.getOutputStream().write(jsonString.getBytes());
+        Connections.get().addConnection(this);
+        ArrayList<User> onlineUsers = Connections.get().getOnlineUsers();
+        sendUsers(onlineUsers);
+    }
+
+    private void sendUsers(ArrayList<User> users) throws IOException
+    {
+        JSONArray array = new JSONArray();
+        for (int i = 0; i < users.size(); i++)
+        {
+            User auxUser = users.get(i);
+            Map<String, String> mapUser = new HashMap<>();
+            mapUser.put("name", auxUser.getName());
+            JSONObject jsonUser = new JSONObject(mapUser);
+            array.put(jsonUser);
+        }    
+
+        Map<String, String> map = new HashMap<>();
+        map.put("code", "4");
+        map.put("array", array.toString());
+        JSONObject json = new JSONObject(map);
+        String jsonString = json.toString();
+        System.out.println(jsonString);
+
+        for (int i = 0; i < Connections.get().getCount(); i++)
+        {
+            Socket socket = Connections.get().getConnections().get(i).getClient();
+            socket.getOutputStream().write(jsonString.getBytes());
+        }        
+    }
+
+    private void sendMessage(Message message) throws IOException
+    {
+        System.out.println("Sending message");
+        Map<String,String> map = new HashMap<>();
+        map.put("code", "5");
+        map.put("sender", message.getSender());
+        map.put("receiver", message.getReceiver());
+        map.put("content", message.getContent());
+
+        JSONObject json = new JSONObject(map);
+        String jsonString = json.toString();
+        Client receiver = Connections.get().getClient(message.getReceiver());
+        receiver.getClient().getOutputStream().write(jsonString.getBytes());
     }
 
     private int getCode(String input) throws JSONException
@@ -131,7 +194,20 @@ public class Client extends Thread
         return Integer.parseInt(json.getString("op"));        
     }
 
-    private User signIn(String input) throws WCException, JSONException, LevelEmitException
+    private Message getMessage(String input) throws JSONException
+    {
+        JSONObject json = new JSONObject(input);
+        String content = json.getString("content");
+        String sender = json.getString("sender");
+        String receiver = json.getString("receiver");
+        Message message = new Message();
+        message.setContent(content);
+        message.setSender(sender);
+        message.setReceiver(receiver);
+        return message;
+    }
+
+    private User signIn(String input) throws WCException, JSONException, LevelEmitException, IOException
     {
         if (user != null)
         {
@@ -142,18 +218,35 @@ public class Client extends Thread
         String name = json.getString("name");
         String pass = json.getString("pass");
 
-        User checkuUser = dbManager.getUser(name);
-        if (checkuUser == null)
+        User checkUser = dbManager.getUser(name);
+        if (checkUser == null)
         {
             throw new WCException("Username does not exist");
         }
 
-        if (!checkuUser.getPass().equals(pass))
+        if (!checkUser.getPass().equals(pass))
         {
             throw new WCException("Password is incorrect");
         }
 
-        return checkuUser;
+        if (isOnline(name))
+        {
+            Client checkClient = Connections.get().getClient(name);
+            Socket prevSocket = checkClient.getClient();
+            if (!prevSocket.equals(client))
+            {
+                Map<String, String> map = new HashMap<>();
+                map.put("code", "3");
+                map.put("message", "Another app has just logged in with this account");
+                JSONObject jsonPrev = new JSONObject(map);
+                String jsonStringPrev = jsonPrev.toString();
+                prevSocket.getOutputStream().write(jsonStringPrev.getBytes());
+                Connections.get().removeConnection(checkClient);
+                checkClient.setUser(null);
+            }
+        }
+
+        return checkUser;
     }
 
     private User signUp(String input) throws LevelEmitException, JSONException, WCException
@@ -181,13 +274,24 @@ public class Client extends Thread
         return dbManager.getUser(name);
     }
 
-    private void removeSession(int id)
+    private boolean isOnline(String name)
     {
-
+        Client checkClient = Connections.get().getClient(name);
+        return checkClient != null;        
     }
 
-    private boolean isOnline(int id)
+    public User getUser() 
     {
-        return true;
+        return user;
+    }
+
+    public void setUser(User user)
+    {
+        this.user = user;
+    }
+
+    public Socket getClient() 
+    {
+        return client;
     }
 }
